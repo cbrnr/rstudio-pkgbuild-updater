@@ -1,0 +1,106 @@
+name: Update RStudio PKGBUILD
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest RStudio version and checksum
+        id: rstudio
+        run: |
+          PAGE=$(curl -fsSL "https://posit.co/download/rstudio-desktop/")
+
+          # Extract version and SHA256 from the page
+          VERSION=$(echo "$PAGE" | grep -oP 'rstudio-\K[0-9]+\.[0-9]+\.[0-9]+-[0-9]+(?=-amd64\.deb)' | head -1)
+          PKGVER=$(echo "$VERSION" | sed 's/-/\./')
+          DEB_URL="https://download1.rstudio.org/electron/jammy/amd64/rstudio-${VERSION}-amd64.deb"
+
+          # Extract SHA256 from the table cell following the Ubuntu 22 .deb link
+          SHA256=$(echo "$PAGE" | grep -A1 "rstudio-${VERSION}-amd64\.deb" | grep -oP '[a-f0-9]{64}' | head -1)
+
+          echo "pkgver=${PKGVER}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "deb_url=${DEB_URL}" >> $GITHUB_OUTPUT
+          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+
+      - name: Fetch current Gist
+        id: gist
+        env:
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          curl -fsSL \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/gists/${GIST_ID}" \
+            -o gist.json
+
+          CURRENT_VER=$(python3 -c "
+          import sys, json
+          data = json.load(open('gist.json'))
+          content = data['files']['PKGBUILD']['content']
+          for line in content.splitlines():
+              if line.startswith('pkgver='):
+                  print(line.split('=')[1])
+                  break
+          ")
+          echo "current_ver=${CURRENT_VER}" >> $GITHUB_OUTPUT
+
+      - name: Update Gist if version changed
+        if: steps.gist.outputs.current_ver != steps.rstudio.outputs.pkgver
+        env:
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN }}
+          PKGVER: ${{ steps.rstudio.outputs.pkgver }}
+          VERSION: ${{ steps.rstudio.outputs.version }}
+          SHA256: ${{ steps.rstudio.outputs.sha256 }}
+          DEB_URL: ${{ steps.rstudio.outputs.deb_url }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, urllib.request
+
+          token = os.environ['GH_TOKEN']
+          gist_id = os.environ['GIST_ID']
+          pkgver = os.environ['PKGVER']
+          version = os.environ['VERSION']
+          sha256 = os.environ['SHA256']
+          deb_url = os.environ['DEB_URL']
+
+          data = json.load(open('gist.json'))
+          pkgbuild = data['files']['PKGBUILD']['content']
+          srcinfo = data['files']['.SRCINFO']['content']
+
+          # Update PKGBUILD
+          pkgbuild = re.sub(r'^pkgver=.*', f'pkgver={pkgver}', pkgbuild, flags=re.MULTILINE)
+          pkgbuild = re.sub(r'^pkgrel=.*', 'pkgrel=2', pkgbuild, flags=re.MULTILINE)
+          pkgbuild = re.sub(r"sha256sums_x86_64=\('.*?'\)", f"sha256sums_x86_64=('{sha256}')", pkgbuild)
+
+          # Update .SRCINFO
+          srcinfo = re.sub(r'pkgver = .*', f'pkgver = {pkgver}', srcinfo)
+          srcinfo = re.sub(r'pkgrel = .*', 'pkgrel = 2', srcinfo)
+          srcinfo = re.sub(r'provides = rstudio-desktop=.*', f'provides = rstudio-desktop={pkgver}', srcinfo)
+          srcinfo = re.sub(r'source_x86_64 = .*', f'source_x86_64 = {deb_url}', srcinfo)
+          srcinfo = re.sub(r'sha256sums_x86_64 = .*', f'sha256sums_x86_64 = {sha256}', srcinfo)
+
+          payload = json.dumps({
+              "files": {
+                  "PKGBUILD": {"content": pkgbuild},
+                  ".SRCINFO": {"content": srcinfo}
+              }
+          }).encode()
+
+          req = urllib.request.Request(
+              f"https://api.github.com/gists/{gist_id}",
+              data=payload,
+              method="PATCH",
+              headers={
+                  "Authorization": f"token {token}",
+                  "Content-Type": "application/json",
+              }
+          )
+          urllib.request.urlopen(req)
+          print(f"Gist updated to {pkgver}!")
+          EOF
