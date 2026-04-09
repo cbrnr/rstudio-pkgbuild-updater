@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force update even if version has not changed'
+        type: boolean
+        default: false
 
 jobs:
   update:
@@ -19,8 +24,8 @@ jobs:
           PKGVER=$(echo "$VERSION" | sed 's/-/\./')
           DEB_URL="https://download1.rstudio.org/electron/jammy/amd64/rstudio-${VERSION}-amd64.deb"
 
-          # Extract SHA256 from the table cell following the Ubuntu 22 .deb link
-          SHA256=$(echo "$PAGE" | grep -A1 "rstudio-${VERSION}-amd64\.deb" | grep -oP '[a-f0-9]{64}' | head -1)
+          # Extract SHA256 from the tooltip popup following the Ubuntu 22 .deb link
+          SHA256=$(echo "$PAGE" | grep -A 40 "rstudio-${VERSION}-amd64\.deb" | grep -oP '[a-f0-9]{64}' | head -1)
 
           echo "pkgver=${PKGVER}" >> $GITHUB_OUTPUT
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -50,7 +55,7 @@ jobs:
           echo "current_ver=${CURRENT_VER}" >> $GITHUB_OUTPUT
 
       - name: Update Gist if version changed
-        if: steps.gist.outputs.current_ver != steps.rstudio.outputs.pkgver
+        if: steps.gist.outputs.current_ver != steps.rstudio.outputs.pkgver || inputs.force == true
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GH_TOKEN: ${{ secrets.GIST_TOKEN }}
