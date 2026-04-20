@@ -17,15 +17,19 @@ jobs:
       - name: Get latest RStudio version and checksum
         id: rstudio
         run: |
-          PAGE=$(curl -fsSL "https://posit.co/download/rstudio-desktop/")
+          PAGE=$(curl -fsSL "https://live-rstudio.pantheonsite.io/download/rstudio-desktop/?posit_iframe=1")
 
-          # Extract version and SHA256 from the page
+          # Extract version and SHA256 from the download widget page
           VERSION=$(echo "$PAGE" | grep -oP 'rstudio-\K[0-9]+\.[0-9]+\.[0-9]+-[0-9]+(?=-amd64\.deb)' | head -1)
           PKGVER=$(echo "$VERSION" | sed 's/-/\./')
           DEB_URL="https://download1.rstudio.org/electron/jammy/amd64/rstudio-${VERSION}-amd64.deb"
 
-          # Extract SHA256 from the tooltip popup following the Ubuntu 22 .deb link
-          SHA256=$(echo "$PAGE" | grep -A 40 "rstudio-${VERSION}-amd64\.deb" | grep -oP '[a-f0-9]{64}' | head -1)
+          # Extract SHA256: the hash appears as plain text after the .deb link
+          SHA256=$(echo "$PAGE" | grep -A50 "rstudio-${VERSION}-amd64\.deb" | grep -oP '[a-f0-9]{64}' | head -1)
+
+          echo "Extracted version: ${VERSION}"
+          echo "Extracted pkgver:  ${PKGVER}"
+          echo "Extracted SHA256:  ${SHA256}"
 
           echo "pkgver=${PKGVER}" >> $GITHUB_OUTPUT
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
